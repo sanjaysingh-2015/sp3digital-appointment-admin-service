@@ -3,12 +3,26 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const swaggerUi = require('swagger-ui-express');
 
+const swaggerSpec = require('./config/swagger');
 const db = require('./models');
 const { authenticate } = require('./middleware/authentication');
 const appointmentSlotConfigRoutes = require('./routes/appointmentSlotConfigRoutes');
 
 const app = express();
+
+// Swagger UI serves its own inline <script>/<style> tags, which the
+// strict default CSP set by `app.use(helmet())` below would block.
+// Registering this BEFORE the global helmet() means, for requests under
+// /docs, this relaxed config runs (and responds) first — the stricter
+// global one below never gets a chance to add its CSP header for these
+// two routes. Every other route is unaffected and still gets full helmet
+// defaults. (Same pattern as organization-admin-service's app.js.)
+app.use('/docs', helmet({ contentSecurityPolicy: false }), swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customSiteTitle: 'SP3 Digital — Appointment Admin Service API Docs',
+}));
+app.get('/docs.json', (req, res) => res.json(swaggerSpec));
 
 // ALLOWED_ORIGINS: comma-separated list, e.g.
 //   ALLOWED_ORIGINS=http://localhost:4200,https://identity-admin.sp3digital.com
@@ -38,6 +52,23 @@ const apiRateLimiter = rateLimit({
 
 const basePath = '/api/v1/appointment-admin';
 
+/**
+ * @openapi
+ * /health:
+ *   get:
+ *     tags: [Health]
+ *     summary: Liveness check
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: Service is up.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status: { type: string, example: ok }
+ */
 app.get(`${basePath}/health`, (req, res) => res.status(200).json({ status: 'ok' }));
 
 // Every route past this point requires a valid bearer token — either a

@@ -54,14 +54,12 @@ async function verifyToken(token) {
     issuer: process.env.ADMIN_JWT_ISSUER || undefined,
     audience: process.env.ADMIN_JWT_AUDIENCE || undefined,
   };
-
   if (process.env.ADMIN_JWT_SECRET) {
     return jwt.verify(token, process.env.ADMIN_JWT_SECRET, {
       ...options,
       algorithms: ['HS256', 'HS384', 'HS512'],
     });
   }
-
   if (!process.env.ADMIN_JWKS_URL) {
     throw authError(503, 'AUTH_CONFIGURATION_ERROR', 'No admin JWT verifier is configured');
   }
@@ -104,6 +102,7 @@ function scopesFromClaims(claims) {
 async function authenticate(req, res, next) {
   try {
     const token = getBearerToken(req.headers.authorization);
+  console.log("Token ==> ", token);
     if (!token) throw authError(401, 'UNAUTHENTICATED', 'A bearer token is required');
 
     if (isInternalServiceToken(token)) {
@@ -121,7 +120,9 @@ async function authenticate(req, res, next) {
     }
 
     const claims = await verifyToken(token);
+    console.log("Claims ==> ", claims);
     const tenantUuid = claims.tenant_uuid || claims.tenantUuid || claims.tid;
+    console.log("tenantUuid ==> ", tenantUuid);
     if (!tenantUuid || typeof tenantUuid !== 'string') {
       throw authError(403, 'TENANT_CLAIM_REQUIRED', 'JWT must include a tenant UUID claim');
     }
