@@ -1,0 +1,32 @@
+{
+  "name": "sp3digital-appointment-service",
+  "version": "1.0.0",
+  "description": "SP3 Digital Appointment Configuration service — recurring slot rules, facility closures, and the TENANT_USER/TENANT_ADMIN maker-checker approval workflow for slot configuration.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.19.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.2",
+    "helmet": "^8.3.0",
+    "joi": "^18.2.3",
+    "jsonwebtoken": "^9.0.3",
+    "mysql2": "^3.23.3",
+    "sequelize": "^6.37.8",
+    "uuid": "^14.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "sqlite3": "^6.0.1"
+  }
+}

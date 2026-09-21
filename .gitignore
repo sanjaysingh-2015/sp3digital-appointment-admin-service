@@ -1,0 +1,7 @@
+# N-Mod EXT ignore file
+.nmodignore
+.env
+node_modules/
+.envcerts/
+certs-new/
+*.pem
