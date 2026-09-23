@@ -102,7 +102,6 @@ function scopesFromClaims(claims) {
 async function authenticate(req, res, next) {
   try {
     const token = getBearerToken(req.headers.authorization);
-  console.log("Token ==> ", token);
     if (!token) throw authError(401, 'UNAUTHENTICATED', 'A bearer token is required');
 
     if (isInternalServiceToken(token)) {
@@ -120,9 +119,7 @@ async function authenticate(req, res, next) {
     }
 
     const claims = await verifyToken(token);
-    console.log("Claims ==> ", claims);
     const tenantUuid = claims.tenant_uuid || claims.tenantUuid || claims.tid;
-    console.log("tenantUuid ==> ", tenantUuid);
     if (!tenantUuid || typeof tenantUuid !== 'string') {
       throw authError(403, 'TENANT_CLAIM_REQUIRED', 'JWT must include a tenant UUID claim');
     }

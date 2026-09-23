@@ -20,4 +20,18 @@ const SLOT_CONFIG_PERMISSIONS = {
   APPROVE: 'appointment-admin:slot-config:approve',
 };
 
-module.exports = { SLOT_CONFIG_PERMISSIONS };
+/**
+ * Read access to the appointments list/search. Granted to TENANT_ADMIN
+ * and TENANT_USER (see identity-admin-service's
+ * database/seeds/appointment-slot-config-rbac.sql) — both only ever see
+ * their own tenant's appointments (enforced in appointmentService.js).
+ * SUPERADMIN's ALL_PERMISSIONS bypasses this entirely and additionally
+ * sees every tenant's appointments — see isSuperAdmin() in
+ * appointmentController.js, the same pattern organization-admin-service
+ * uses for its own SUPERADMIN "list all tenants" capability.
+ */
+const APPOINTMENT_PERMISSIONS = {
+  READ: 'appointment-admin:appointment:read',
+};
+
+module.exports = { SLOT_CONFIG_PERMISSIONS, APPOINTMENT_PERMISSIONS };

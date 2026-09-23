@@ -3,6 +3,7 @@ const swaggerJsdoc = require('swagger-jsdoc');
 // Shared enum lists, kept in sync with appointmentSlotConfig.validation.js
 // so the docs never drift from what the API actually accepts.
 const { STATUSES, APPROVAL_STATUSES } = require('../validations/appointmentSlotConfig.validation');
+const { STATUSES: APPOINTMENT_STATUSES } = require('../validations/appointment.validation');
 
 const basePath = '/api/v1/appointment-admin';
 
@@ -63,6 +64,12 @@ const options = {
     servers: [{ url: basePath, description: 'Base path for all resource routes' }],
     tags: [
       { name: 'Health', description: 'Service liveness check (no auth required)' },
+      {
+        name: 'Appointments',
+        description:
+          'Read-only appointment list/search. SUPERADMIN sees every tenant\'s appointments; ' +
+          'TENANT_ADMIN and TENANT_USER see only their own tenant\'s.',
+      },
       {
         name: 'Slot Configs',
         description:
@@ -198,6 +205,35 @@ const options = {
           required: ['rejectionReason'],
           properties: {
             rejectionReason: { type: 'string', maxLength: 500, example: 'Overlaps with an existing approved schedule' },
+          },
+        },
+        Appointment: {
+          type: 'object',
+          properties: {
+            appointmentId: { type: 'integer', example: 9001 },
+            appointmentUuid: { type: 'string', format: 'uuid' },
+            tenantUuid: { type: 'string', format: 'uuid' },
+            facilityId: { type: 'integer' },
+            facilityServiceId: { type: 'integer' },
+            resourceId: { type: 'integer', nullable: true },
+            slotId: { type: 'integer' },
+            patientRef: { type: 'string', description: 'Id in the external patient/EMR service.' },
+            patientName: { type: 'string', example: 'Ravi Kumar' },
+            patientPhone: { type: 'string', example: '9876543210' },
+            patientEmail: { type: 'string', nullable: true },
+            appointmentDate: { type: 'string', format: 'date' },
+            startTime: { type: 'string', example: '09:00' },
+            endTime: { type: 'string', example: '09:30' },
+            tokenNumber: { type: 'string', nullable: true },
+            bookingChannel: { type: 'string', enum: ['WALK_IN', 'ONLINE', 'PHONE', 'ADMIN'] },
+            status: { type: 'string', enum: [...APPOINTMENT_STATUSES] },
+            cancellationReasonId: { type: 'integer', nullable: true },
+            cancellationNotes: { type: 'string', nullable: true },
+            cancelledBy: { type: 'integer', nullable: true },
+            cancelledOn: { type: 'string', format: 'date-time', nullable: true },
+            rescheduledFromAppointmentId: { type: 'integer', nullable: true },
+            notes: { type: 'string', nullable: true },
+            ...auditFields,
           },
         },
       },

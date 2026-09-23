@@ -9,6 +9,7 @@ const swaggerSpec = require('./config/swagger');
 const db = require('./models');
 const { authenticate } = require('./middleware/authentication');
 const appointmentSlotConfigRoutes = require('./routes/appointmentSlotConfigRoutes');
+const appointmentRoutes = require('./routes/appointmentRoutes');
 
 const app = express();
 
@@ -77,6 +78,7 @@ app.get(`${basePath}/health`, (req, res) => res.status(200).json({ status: 'ok' 
 app.use(basePath, apiRateLimiter, authenticate);
 
 app.use(`${basePath}/slot-configs`, appointmentSlotConfigRoutes);
+app.use(`${basePath}/appointments`, appointmentRoutes);
 
 // Same error envelope shape as identity-admin-service and
 // organization-admin-service, so every UI's error.message handling

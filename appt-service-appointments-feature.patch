@@ -1,0 +1,669 @@
+diff --git a/src/app.js b/src/app.js
+index ff6e1f6..c7b87ae 100644
+--- a/src/app.js
++++ b/src/app.js
+@@ -9,6 +9,7 @@ const swaggerSpec = require('./config/swagger');
+ const db = require('./models');
+ const { authenticate } = require('./middleware/authentication');
+ const appointmentSlotConfigRoutes = require('./routes/appointmentSlotConfigRoutes');
++const appointmentRoutes = require('./routes/appointmentRoutes');
+ 
+ const app = express();
+ 
+@@ -77,6 +78,7 @@ app.get(`${basePath}/health`, (req, res) => res.status(200).json({ status: 'ok'
+ app.use(basePath, apiRateLimiter, authenticate);
+ 
+ app.use(`${basePath}/slot-configs`, appointmentSlotConfigRoutes);
++app.use(`${basePath}/appointments`, appointmentRoutes);
+ 
+ // Same error envelope shape as identity-admin-service and
+ // organization-admin-service, so every UI's error.message handling
+diff --git a/src/config/swagger.js b/src/config/swagger.js
+index 1ff2c5d..bb5511c 100644
+--- a/src/config/swagger.js
++++ b/src/config/swagger.js
+@@ -3,6 +3,7 @@ const swaggerJsdoc = require('swagger-jsdoc');
+ // Shared enum lists, kept in sync with appointmentSlotConfig.validation.js
+ // so the docs never drift from what the API actually accepts.
+ const { STATUSES, APPROVAL_STATUSES } = require('../validations/appointmentSlotConfig.validation');
++const { STATUSES: APPOINTMENT_STATUSES } = require('../validations/appointment.validation');
+ 
+ const basePath = '/api/v1/appointment-admin';
+ 
+@@ -63,6 +64,12 @@ const options = {
+     servers: [{ url: basePath, description: 'Base path for all resource routes' }],
+     tags: [
+       { name: 'Health', description: 'Service liveness check (no auth required)' },
++      {
++        name: 'Appointments',
++        description:
++          'Read-only appointment list/search. SUPERADMIN sees every tenant\'s appointments; ' +
++          'TENANT_ADMIN and TENANT_USER see only their own tenant\'s.',
++      },
+       {
+         name: 'Slot Configs',
+         description:
+@@ -200,6 +207,35 @@ const options = {
+             rejectionReason: { type: 'string', maxLength: 500, example: 'Overlaps with an existing approved schedule' },
+           },
+         },
++        Appointment: {
++          type: 'object',
++          properties: {
++            appointmentId: { type: 'integer', example: 9001 },
++            appointmentUuid: { type: 'string', format: 'uuid' },
++            tenantUuid: { type: 'string', format: 'uuid' },
++            facilityId: { type: 'integer' },
++            facilityServiceId: { type: 'integer' },
++            resourceId: { type: 'integer', nullable: true },
++            slotId: { type: 'integer' },
++            patientRef: { type: 'string', description: 'Id in the external patient/EMR service.' },
++            patientName: { type: 'string', example: 'Ravi Kumar' },
++            patientPhone: { type: 'string', example: '9876543210' },
++            patientEmail: { type: 'string', nullable: true },
++            appointmentDate: { type: 'string', format: 'date' },
++            startTime: { type: 'string', example: '09:00' },
++            endTime: { type: 'string', example: '09:30' },
++            tokenNumber: { type: 'string', nullable: true },
++            bookingChannel: { type: 'string', enum: ['WALK_IN', 'ONLINE', 'PHONE', 'ADMIN'] },
++            status: { type: 'string', enum: [...APPOINTMENT_STATUSES] },
++            cancellationReasonId: { type: 'integer', nullable: true },
++            cancellationNotes: { type: 'string', nullable: true },
++            cancelledBy: { type: 'integer', nullable: true },
++            cancelledOn: { type: 'string', format: 'date-time', nullable: true },
++            rescheduledFromAppointmentId: { type: 'integer', nullable: true },
++            notes: { type: 'string', nullable: true },
++            ...auditFields,
++          },
++        },
+       },
+       responses: {
+         ValidationError: {
+diff --git a/src/controllers/appointmentController.js b/src/controllers/appointmentController.js
+new file mode 100644
+index 0000000..033d19b
+--- /dev/null
++++ b/src/controllers/appointmentController.js
+@@ -0,0 +1,50 @@
++const appointmentService = require('../services/appointmentService');
++
++/**
++ * A caller whose JWT `permissions` claim grants ALL_PERMISSIONS is a
++ * SUPERADMIN. Mirrors organization-admin-service's organizationController
++ * .js#isSuperAdmin() exactly — same convention, same reasoning: a platform
++ * superadmin needs visibility across every tenant, not just the one named
++ * in their own JWT.
++ */
++function isSuperAdmin(req) {
++  return !!req.auth?.scopes?.has('ALL_PERMISSIONS');
++}
++
++class AppointmentController {
++  getList = async (req, res, next) => {
++    try {
++      const { page, limit, search, facilityId, facilityServiceId, status, dateFrom, dateTo, tenantUuid } = req.query;
++      const result = await appointmentService.getList({
++        page,
++        limit,
++        search,
++        facilityId,
++        facilityServiceId,
++        status,
++        dateFrom,
++        dateTo,
++        // SUPERADMIN: no tenant filter by default (all tenants), or an
++        // explicit ?tenantUuid= to narrow to one. Everyone else is always
++        // pinned to their own token's tenant.
++        tenantUuid: isSuperAdmin(req) ? (tenantUuid || undefined) : req.auth.tenantUuid,
++      });
++      return res.status(200).json(result);
++    } catch (error) {
++      return next(error);
++    }
++  };
++
++  getById = async (req, res, next) => {
++    try {
++      const appointment = await appointmentService.getById(req.params.id, {
++        tenantUuid: isSuperAdmin(req) ? undefined : req.auth.tenantUuid,
++      });
++      return res.status(200).json(appointment);
++    } catch (error) {
++      return next(error);
++    }
++  };
++}
++
++module.exports = new AppointmentController();
+diff --git a/src/middleware/authentication.js b/src/middleware/authentication.js
+index 0210892..91f7646 100644
+--- a/src/middleware/authentication.js
++++ b/src/middleware/authentication.js
+@@ -102,7 +102,6 @@ function scopesFromClaims(claims) {
+ async function authenticate(req, res, next) {
+   try {
+     const token = getBearerToken(req.headers.authorization);
+-  console.log("Token ==> ", token);
+     if (!token) throw authError(401, 'UNAUTHENTICATED', 'A bearer token is required');
+ 
+     if (isInternalServiceToken(token)) {
+@@ -120,9 +119,7 @@ async function authenticate(req, res, next) {
+     }
+ 
+     const claims = await verifyToken(token);
+-    console.log("Claims ==> ", claims);
+     const tenantUuid = claims.tenant_uuid || claims.tenantUuid || claims.tid;
+-    console.log("tenantUuid ==> ", tenantUuid);
+     if (!tenantUuid || typeof tenantUuid !== 'string') {
+       throw authError(403, 'TENANT_CLAIM_REQUIRED', 'JWT must include a tenant UUID claim');
+     }
+diff --git a/src/models/appointment.model.js b/src/models/appointment.model.js
+new file mode 100644
+index 0000000..a1b1b59
+--- /dev/null
++++ b/src/models/appointment.model.js
+@@ -0,0 +1,53 @@
++module.exports = (sequelize, DataTypes) => {
++  const Appointment = sequelize.define(
++    'Appointment',
++    {
++      appointmentId: { type: DataTypes.BIGINT, autoIncrement: true, primaryKey: true, field: 'appointment_id' },
++      appointmentUuid: { type: DataTypes.UUID, allowNull: false, unique: true, defaultValue: DataTypes.UUIDV4, field: 'appointment_uuid' },
++      // Cross-database references (organization-admin-service) — no FK,
++      // same reasoning as appointmentSlotConfig.model.js.
++      tenantUuid: { type: DataTypes.UUID, allowNull: false, field: 'tenant_uuid' },
++      facilityId: { type: DataTypes.BIGINT, allowNull: false, field: 'facility_id' },
++      facilityServiceId: { type: DataTypes.BIGINT, allowNull: false, field: 'facility_service_id' },
++      resourceId: { type: DataTypes.BIGINT, allowNull: true, field: 'resource_id' },
++      slotId: { type: DataTypes.BIGINT, allowNull: false, field: 'slot_id' },
++      // Patient lives in an external patient/EMR service — patientRef is
++      // that service's id (no FK possible); the rest is a snapshot taken
++      // at booking time, so historical bookings stay accurate even if the
++      // patient's contact details change later upstream.
++      patientRef: { type: DataTypes.STRING(100), allowNull: false, field: 'patient_ref' },
++      patientName: { type: DataTypes.STRING(200), allowNull: false, field: 'patient_name' },
++      patientPhone: { type: DataTypes.STRING(20), allowNull: false, field: 'patient_phone' },
++      patientEmail: { type: DataTypes.STRING(150), allowNull: true, field: 'patient_email' },
++      appointmentDate: { type: DataTypes.DATEONLY, allowNull: false, field: 'appointment_date' },
++      startTime: { type: DataTypes.TIME, allowNull: false, field: 'start_time' },
++      endTime: { type: DataTypes.TIME, allowNull: false, field: 'end_time' },
++      tokenNumber: { type: DataTypes.STRING(20), allowNull: true, field: 'token_number' },
++      bookingChannel: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'ADMIN', field: 'booking_channel' },
++      status: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'BOOKED', field: 'status' },
++      cancellationReasonId: { type: DataTypes.BIGINT, allowNull: true, field: 'cancellation_reason_id' },
++      cancellationNotes: { type: DataTypes.STRING(500), allowNull: true, field: 'cancellation_notes' },
++      cancelledBy: { type: DataTypes.BIGINT, allowNull: true, field: 'cancelled_by' },
++      cancelledOn: { type: DataTypes.DATE, allowNull: true, field: 'cancelled_on' },
++      rescheduledFromAppointmentId: { type: DataTypes.BIGINT, allowNull: true, field: 'rescheduled_from_appointment_id' },
++      notes: { type: DataTypes.STRING(1000), allowNull: true, field: 'notes' },
++      createdBy: { type: DataTypes.BIGINT, allowNull: true, field: 'created_by' },
++      createdOn: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW, field: 'created_on' },
++      modifiedBy: { type: DataTypes.BIGINT, allowNull: true, field: 'modified_by' },
++      modifiedOn: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW, field: 'modified_on' },
++    },
++    {
++      tableName: 'appointments',
++      freezeTableName: true,
++      timestamps: false,
++      indexes: [
++        { fields: ['tenant_uuid'] },
++        { fields: ['facility_id', 'appointment_date', 'status'] },
++        { fields: ['slot_id'] },
++        { fields: ['patient_ref'] },
++      ],
++    },
++  );
++
++  return Appointment;
++};
+diff --git a/src/models/index.js b/src/models/index.js
+index d69d69d..89f12d9 100644
+--- a/src/models/index.js
++++ b/src/models/index.js
+@@ -3,6 +3,13 @@ const sequelize = require('../config/db');
+ 
+ const FacilityResource = require('./facilityResource.model')(sequelize, DataTypes);
+ const AppointmentSlotConfig = require('./appointmentSlotConfig.model')(sequelize, DataTypes);
++const Appointment = require('./appointment.model')(sequelize, DataTypes);
++// No association declared for Appointment.slotId -> appointment_slots or
++// Appointment.cancellationReasonId -> appointment_cancellation_reasons —
++// neither of those tables has a Sequelize model in this codebase yet (only
++// slot *configs* do). This is fine for the read-only list/search endpoint
++// this model currently backs; revisit once a booking/slot-generation
++// feature actually writes to this table and needs those relations.
+ 
+ // --- Associations ---
+ // A real, enforced FK (unlike organization-admin-service's geography
+@@ -14,4 +21,4 @@ const AppointmentSlotConfig = require('./appointmentSlotConfig.model')(sequelize
+ FacilityResource.hasMany(AppointmentSlotConfig, { foreignKey: 'resourceId' });
+ AppointmentSlotConfig.belongsTo(FacilityResource, { as: 'resource', foreignKey: 'resourceId' });
+ 
+-module.exports = { sequelize, FacilityResource, AppointmentSlotConfig };
++module.exports = { sequelize, FacilityResource, AppointmentSlotConfig, Appointment };
+diff --git a/src/routes/appointmentRoutes.js b/src/routes/appointmentRoutes.js
+new file mode 100644
+index 0000000..6939b2f
+--- /dev/null
++++ b/src/routes/appointmentRoutes.js
+@@ -0,0 +1,95 @@
++const express = require('express');
++const router = express.Router();
++
++const controller = require('../controllers/appointmentController');
++const { validate, id } = require('../middleware/validate');
++const { authorize } = require('../middleware/authentication');
++const { APPOINTMENT_PERMISSIONS } = require('../utils/permissions');
++const { listQuerySchema, idParam } = require('../validations/appointment.validation');
++
++// Route paths are relative to /api/v1/appointment-admin/appointments (see
++// app.js). Read-only — there's no create/update route here yet, since the
++// booking flow (POST /appointments from a patient-facing or front-desk
++// client) is a separate, not-yet-built feature. This is the admin
++// visibility layer ahead of that: SUPERADMIN sees every tenant's
++// appointments, everyone else (TENANT_ADMIN/TENANT_USER) sees only their
++// own tenant's — enforced in appointmentController.js/appointmentService.js,
++// not by anything route-level here.
++
++/**
++ * @openapi
++ * /appointments:
++ *   get:
++ *     tags: [Appointments]
++ *     summary: Paginated, searchable list of appointments
++ *     description: >
++ *       SUPERADMIN (ALL_PERMISSIONS) sees every tenant's appointments by
++ *       default, optionally narrowed with `?tenantUuid=`. TENANT_ADMIN and
++ *       TENANT_USER always see only their own tenant's, regardless of any
++ *       `tenantUuid` they pass.
++ *     parameters:
++ *       - $ref: '#/components/parameters/PageParam'
++ *       - $ref: '#/components/parameters/LimitParam'
++ *       - $ref: '#/components/parameters/SortByParam'
++ *       - $ref: '#/components/parameters/SortDirParam'
++ *       - name: search
++ *         in: query
++ *         description: Matches patient name, patient phone, or token number.
++ *         schema: { type: string }
++ *       - $ref: '#/components/parameters/FacilityIdParam'
++ *       - $ref: '#/components/parameters/FacilityServiceIdParam'
++ *       - name: status
++ *         in: query
++ *         schema: { type: string, enum: [BOOKED, CONFIRMED, CHECKED_IN, IN_PROGRESS, COMPLETED, CANCELLED, NO_SHOW, RESCHEDULED] }
++ *       - name: dateFrom
++ *         in: query
++ *         schema: { type: string, format: date }
++ *       - name: dateTo
++ *         in: query
++ *         schema: { type: string, format: date }
++ *       - name: tenantUuid
++ *         in: query
++ *         description: SUPERADMIN only — narrows the all-tenant default to one tenant. Ignored for everyone else.
++ *         schema: { type: string, format: uuid }
++ *     responses:
++ *       200:
++ *         description: Paginated appointments.
++ *         content:
++ *           application/json:
++ *             schema:
++ *               type: object
++ *               properties:
++ *                 data:
++ *                   type: array
++ *                   items: { $ref: '#/components/schemas/Appointment' }
++ *                 pagination: { $ref: '#/components/schemas/Pagination' }
++ *       400: { $ref: '#/components/responses/ValidationError' }
++ *       401: { $ref: '#/components/responses/Unauthenticated' }
++ *       403: { $ref: '#/components/responses/Forbidden' }
++ */
++router.get('/', authorize(APPOINTMENT_PERMISSIONS.READ), validate(listQuerySchema, 'query'), controller.getList);
++
++/**
++ * @openapi
++ * /appointments/{id}:
++ *   get:
++ *     tags: [Appointments]
++ *     summary: Get a single appointment by id
++ *     parameters:
++ *       - name: id
++ *         in: path
++ *         required: true
++ *         schema: { type: integer }
++ *     responses:
++ *       200:
++ *         description: The appointment.
++ *         content:
++ *           application/json:
++ *             schema: { $ref: '#/components/schemas/Appointment' }
++ *       401: { $ref: '#/components/responses/Unauthenticated' }
++ *       403: { $ref: '#/components/responses/Forbidden' }
++ *       404: { $ref: '#/components/responses/NotFound' }
++ */
++router.get('/:id', authorize(APPOINTMENT_PERMISSIONS.READ), validate(idParam, 'params'), controller.getById);
++
++module.exports = router;
+diff --git a/src/services/appointmentService.js b/src/services/appointmentService.js
+new file mode 100644
+index 0000000..2f9f6a9
+--- /dev/null
++++ b/src/services/appointmentService.js
+@@ -0,0 +1,98 @@
++const { Op } = require('sequelize');
++const { Appointment } = require('../models');
++const { toSequelizePage, buildEnvelope } = require('../utils/pagination');
++
++function notFound(message = 'Appointment not found') {
++  const error = new Error(message);
++  error.statusCode = 404;
++  error.code = 'APPOINTMENT_NOT_FOUND';
++  error.expose = true;
++  return error;
++}
++
++function toResponse(appointment) {
++  if (!appointment) return null;
++  const plain = appointment.get ? appointment.get({ plain: true }) : appointment;
++  return {
++    appointmentId: plain.appointmentId,
++    appointmentUuid: plain.appointmentUuid,
++    tenantUuid: plain.tenantUuid,
++    facilityId: plain.facilityId,
++    facilityServiceId: plain.facilityServiceId,
++    resourceId: plain.resourceId,
++    slotId: plain.slotId,
++    patientRef: plain.patientRef,
++    patientName: plain.patientName,
++    patientPhone: plain.patientPhone,
++    patientEmail: plain.patientEmail,
++    appointmentDate: plain.appointmentDate,
++    startTime: plain.startTime,
++    endTime: plain.endTime,
++    tokenNumber: plain.tokenNumber,
++    bookingChannel: plain.bookingChannel,
++    status: plain.status,
++    cancellationReasonId: plain.cancellationReasonId,
++    cancellationNotes: plain.cancellationNotes,
++    cancelledBy: plain.cancelledBy,
++    cancelledOn: plain.cancelledOn,
++    rescheduledFromAppointmentId: plain.rescheduledFromAppointmentId,
++    notes: plain.notes,
++    createdOn: plain.createdOn,
++    modifiedOn: plain.modifiedOn,
++  };
++}
++
++class AppointmentService {
++  /**
++   * tenantUuid: undefined means "every tenant" — only ever passed as
++   * undefined for a SUPERADMIN caller (see appointmentController's
++   * isSuperAdmin()); every other caller is always pinned to their own
++   * token's tenant_uuid regardless of what (if anything) they request.
++   */
++  async getList({ page, limit, tenantUuid, search, facilityId, facilityServiceId, status, dateFrom, dateTo }) {
++    const { limit: safeLimit, offset, page: safePage } = toSequelizePage({ page, limit });
++
++    const where = {};
++    if (tenantUuid) where.tenant_uuid = tenantUuid;
++    if (facilityId) where.facility_id = facilityId;
++    if (facilityServiceId) where.facility_service_id = facilityServiceId;
++    if (status) where.status = status;
++    if (dateFrom || dateTo) {
++      where.appointment_date = {};
++      if (dateFrom) where.appointment_date[Op.gte] = dateFrom;
++      if (dateTo) where.appointment_date[Op.lte] = dateTo;
++    }
++    if (search) {
++      where[Op.or] = [
++        { patient_name: { [Op.like]: `%${search}%` } },
++        { patient_phone: { [Op.like]: `%${search}%` } },
++        { token_number: { [Op.like]: `%${search}%` } },
++      ];
++    }
++
++    const result = await Appointment.findAndCountAll({
++      where,
++      limit: safeLimit,
++      offset,
++      order: [['appointmentDate', 'DESC'], ['startTime', 'DESC']],
++    });
++
++    return buildEnvelope(
++      { rows: result.rows.map(toResponse), count: result.count },
++      { page: safePage, limit: safeLimit },
++    );
++  }
++
++  async getById(appointmentId, { tenantUuid }) {
++    const where = { appointment_id: appointmentId };
++    // Same "undefined tenantUuid = SUPERADMIN sees any tenant" contract as
++    // getList above.
++    if (tenantUuid) where.tenant_uuid = tenantUuid;
++
++    const appointment = await Appointment.findOne({ where });
++    if (!appointment) throw notFound();
++    return toResponse(appointment);
++  }
++}
++
++module.exports = new AppointmentService();
+diff --git a/src/utils/permissions.js b/src/utils/permissions.js
+index f5f0f3e..92457ce 100644
+--- a/src/utils/permissions.js
++++ b/src/utils/permissions.js
+@@ -20,4 +20,18 @@ const SLOT_CONFIG_PERMISSIONS = {
+   APPROVE: 'appointment-admin:slot-config:approve',
+ };
+ 
+-module.exports = { SLOT_CONFIG_PERMISSIONS };
++/**
++ * Read access to the appointments list/search. Granted to TENANT_ADMIN
++ * and TENANT_USER (see identity-admin-service's
++ * database/seeds/appointment-slot-config-rbac.sql) — both only ever see
++ * their own tenant's appointments (enforced in appointmentService.js).
++ * SUPERADMIN's ALL_PERMISSIONS bypasses this entirely and additionally
++ * sees every tenant's appointments — see isSuperAdmin() in
++ * appointmentController.js, the same pattern organization-admin-service
++ * uses for its own SUPERADMIN "list all tenants" capability.
++ */
++const APPOINTMENT_PERMISSIONS = {
++  READ: 'appointment-admin:appointment:read',
++};
++
++module.exports = { SLOT_CONFIG_PERMISSIONS, APPOINTMENT_PERMISSIONS };
+diff --git a/src/validations/appointment.validation.js b/src/validations/appointment.validation.js
+new file mode 100644
+index 0000000..6810674
+--- /dev/null
++++ b/src/validations/appointment.validation.js
+@@ -0,0 +1,20 @@
++const { Joi, id } = require('../middleware/validate');
++const { paginationQuerySchema } = require('../utils/pagination');
++
++const STATUSES = ['BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED'];
++
++const listQuerySchema = paginationQuerySchema({
++  // Free-text search against patient name, patient phone, or token number
++  // — see appointmentService.js#getList for the exact OR clause.
++  search: Joi.string().max(200).allow('').optional(),
++  facilityId: Joi.number().integer().positive().optional(),
++  facilityServiceId: Joi.number().integer().positive().optional(),
++  status: Joi.string().valid(...STATUSES, '').optional(),
++  dateFrom: Joi.date().iso().optional(),
++  dateTo: Joi.date().iso().min(Joi.ref('dateFrom')).optional(),
++  // Only honored for a SUPERADMIN caller (ALL_PERMISSIONS scope) — see
++  // appointmentController.getList. Ignored/overridden for anyone else.
++  tenantUuid: Joi.string().uuid().optional(),
++});
++
++module.exports = { listQuerySchema, STATUSES, idParam: Joi.object({ id }) };
+diff --git a/tests/appointment.test.js b/tests/appointment.test.js
+new file mode 100644
+index 0000000..e68fced
+--- /dev/null
++++ b/tests/appointment.test.js
+@@ -0,0 +1,166 @@
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const jwt = require('jsonwebtoken');
++
++process.env.DB_DIALECT = 'sqlite';
++process.env.ADMIN_JWT_SECRET = 'test-only-shared-secret';
++process.env.ADMIN_JWT_AUDIENCE = 'sp3-appointment-admin-test';
++
++const TENANT_A = '11111111-1111-1111-1111-111111111111';
++const TENANT_B = '22222222-2222-2222-2222-222222222222';
++
++function tokenFor(tenantUuid, userId, permissions) {
++  return jwt.sign(
++    { tenant_uuid: tenantUuid, user_id: userId, permissions },
++    process.env.ADMIN_JWT_SECRET,
++    { audience: process.env.ADMIN_JWT_AUDIENCE, expiresIn: '5m' },
++  );
++}
++
++const TENANT_READ = ['appointment-admin:appointment:read'];
++const SUPERADMIN_PERMISSIONS = ['ALL_PERMISSIONS'];
++
++let app;
++let server;
++let baseUrl;
++
++test.before(async () => {
++  app = require('../src/app');
++  const db = require('../src/models');
++  await db.sequelize.sync({ force: true });
++
++  // Seed directly via the model — there's no create endpoint for
++  // appointments yet (read-only admin visibility layer, see
++  // routes/appointmentRoutes.js's header comment).
++  const { Appointment } = db;
++  await Appointment.bulkCreate([
++    {
++      tenantUuid: TENANT_A, facilityId: 1, facilityServiceId: 1, slotId: 1,
++      patientRef: 'PAT-A-1', patientName: 'Ravi Kumar', patientPhone: '9876543210',
++      appointmentDate: '2026-10-01', startTime: '09:00:00', endTime: '09:30:00',
++      tokenNumber: 'A1', status: 'BOOKED',
++    },
++    {
++      tenantUuid: TENANT_A, facilityId: 1, facilityServiceId: 1, slotId: 2,
++      patientRef: 'PAT-A-2', patientName: 'Anita Singh', patientPhone: '9123456780',
++      appointmentDate: '2026-10-02', startTime: '10:00:00', endTime: '10:30:00',
++      tokenNumber: 'A2', status: 'CANCELLED',
++    },
++    {
++      tenantUuid: TENANT_B, facilityId: 5, facilityServiceId: 5, slotId: 3,
++      patientRef: 'PAT-B-1', patientName: 'Priya Sharma', patientPhone: '9988776655',
++      appointmentDate: '2026-10-01', startTime: '11:00:00', endTime: '11:30:00',
++      tokenNumber: 'B1', status: 'BOOKED',
++    },
++  ]);
++
++  await new Promise((resolve) => { server = app.listen(0, resolve); });
++  baseUrl = `http://127.0.0.1:${server.address().port}`;
++});
++
++test.after(async () => { await new Promise((resolve) => server.close(resolve)); });
++
++async function call(method, path, { token } = {}) {
++  const response = await fetch(`${baseUrl}${path}`, {
++    method,
++    headers: token ? { Authorization: `Bearer ${token}` } : {},
++  });
++  const text = await response.text();
++  return { status: response.status, json: text ? JSON.parse(text) : null };
++}
++
++const BASE = '/api/v1/appointment-admin/appointments';
++
++test('rejects requests with no bearer token', async () => {
++  const { status } = await call('GET', BASE);
++  assert.equal(status, 401);
++});
++
++test('a caller with no READ permission is rejected', async () => {
++  const token = tokenFor(TENANT_A, 1, []);
++  const { status, json } = await call('GET', BASE, { token });
++  assert.equal(status, 403);
++  assert.equal(json.error.code, 'INSUFFICIENT_PERMISSION');
++});
++
++test('TENANT_ADMIN/TENANT_USER only ever see their own tenant\'s appointments', async () => {
++  const token = tokenFor(TENANT_A, 201, TENANT_READ);
++  const { status, json } = await call('GET', BASE, { token });
++  assert.equal(status, 200);
++  assert.equal(json.data.length, 2);
++  assert.ok(json.data.every((row) => row.tenantUuid === TENANT_A));
++});
++
++test('a tenant caller cannot see another tenant\'s appointments even via ?tenantUuid=', async () => {
++  const token = tokenFor(TENANT_A, 201, TENANT_READ);
++  const { status, json } = await call('GET', `${BASE}?tenantUuid=${TENANT_B}`, { token });
++  assert.equal(status, 200);
++  // tenantUuid query param is silently ignored for a non-SUPERADMIN caller
++  // — they still only see their own tenant, not TENANT_B's.
++  assert.ok(json.data.every((row) => row.tenantUuid === TENANT_A));
++});
++
++test('SUPERADMIN (ALL_PERMISSIONS) sees every tenant\'s appointments by default', async () => {
++  const token = tokenFor(TENANT_A, 1, SUPERADMIN_PERMISSIONS);
++  const { status, json } = await call('GET', BASE, { token });
++  assert.equal(status, 200);
++  assert.equal(json.data.length, 3);
++  assert.ok(json.data.some((row) => row.tenantUuid === TENANT_A));
++  assert.ok(json.data.some((row) => row.tenantUuid === TENANT_B));
++});
++
++test('SUPERADMIN can narrow to one tenant with ?tenantUuid=', async () => {
++  const token = tokenFor(TENANT_A, 1, SUPERADMIN_PERMISSIONS);
++  const { status, json } = await call('GET', `${BASE}?tenantUuid=${TENANT_B}`, { token });
++  assert.equal(status, 200);
++  assert.equal(json.data.length, 1);
++  assert.equal(json.data[0].tenantUuid, TENANT_B);
++});
++
++test('search matches patient name', async () => {
++  const token = tokenFor(TENANT_A, 201, TENANT_READ);
++  const { json } = await call('GET', `${BASE}?search=Anita`, { token });
++  assert.equal(json.data.length, 1);
++  assert.equal(json.data[0].patientName, 'Anita Singh');
++});
++
++test('search matches patient phone', async () => {
++  const token = tokenFor(TENANT_A, 201, TENANT_READ);
++  const { json } = await call('GET', `${BASE}?search=9876543210`, { token });
++  assert.equal(json.data.length, 1);
++  assert.equal(json.data[0].patientPhone, '9876543210');
++});
++
++test('search matches token number', async () => {
++  const token = tokenFor(TENANT_A, 201, TENANT_READ);
++  const { json } = await call('GET', `${BASE}?search=A2`, { token });
++  assert.equal(json.data.length, 1);
++  assert.equal(json.data[0].tokenNumber, 'A2');
++});
++
++test('filters by status', async () => {
++  const token = tokenFor(TENANT_A, 201, TENANT_READ);
++  const { json } = await call('GET', `${BASE}?status=CANCELLED`, { token });
++  assert.equal(json.data.length, 1);
++  assert.equal(json.data[0].status, 'CANCELLED');
++});
++
++test('get by id respects tenant isolation (404 across tenants)', async () => {
++  const listToken = tokenFor(TENANT_A, 201, TENANT_READ);
++  const { json: list } = await call('GET', BASE, { token: listToken });
++  const idInTenantA = list.data[0].appointmentId;
++
++  const otherTenantToken = tokenFor(TENANT_B, 301, TENANT_READ);
++  const { status } = await call('GET', `${BASE}/${idInTenantA}`, { token: otherTenantToken });
++  assert.equal(status, 404);
++});
++
++test('SUPERADMIN can get any tenant\'s appointment by id', async () => {
++  const listToken = tokenFor(TENANT_A, 1, SUPERADMIN_PERMISSIONS);
++  const { json: list } = await call('GET', BASE, { token: listToken });
++  const idInTenantB = list.data.find((row) => row.tenantUuid === TENANT_B).appointmentId;
++
++  const { status, json } = await call('GET', `${BASE}/${idInTenantB}`, { token: listToken });
++  assert.equal(status, 200);
++  assert.equal(json.appointmentId, idInTenantB);
++});
