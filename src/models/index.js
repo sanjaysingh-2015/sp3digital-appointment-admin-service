@@ -4,6 +4,7 @@ const sequelize = require('../config/db');
 const FacilityResource = require('./facilityResource.model')(sequelize, DataTypes);
 const AppointmentSlotConfig = require('./appointmentSlotConfig.model')(sequelize, DataTypes);
 const Appointment = require('./appointment.model')(sequelize, DataTypes);
+const FacilityClosure = require('./facilityClosure.model')(sequelize, DataTypes);
 // No association declared for Appointment.slotId -> appointment_slots or
 // Appointment.cancellationReasonId -> appointment_cancellation_reasons —
 // neither of those tables has a Sequelize model in this codebase yet (only
@@ -21,4 +22,9 @@ const Appointment = require('./appointment.model')(sequelize, DataTypes);
 FacilityResource.hasMany(AppointmentSlotConfig, { foreignKey: 'resourceId' });
 AppointmentSlotConfig.belongsTo(FacilityResource, { as: 'resource', foreignKey: 'resourceId' });
 
-module.exports = { sequelize, FacilityResource, AppointmentSlotConfig, Appointment };
+// Same reasoning for FacilityClosure's resourceId — matches
+// fk_closures_resource in the raw SQL exactly.
+FacilityResource.hasMany(FacilityClosure, { foreignKey: 'resourceId' });
+FacilityClosure.belongsTo(FacilityResource, { as: 'resource', foreignKey: 'resourceId' });
+
+module.exports = { sequelize, FacilityResource, AppointmentSlotConfig, Appointment, FacilityClosure };

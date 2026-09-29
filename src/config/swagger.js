@@ -2,8 +2,13 @@ const swaggerJsdoc = require('swagger-jsdoc');
 
 // Shared enum lists, kept in sync with appointmentSlotConfig.validation.js
 // so the docs never drift from what the API actually accepts.
-const { STATUSES, APPROVAL_STATUSES } = require('../validations/appointmentSlotConfig.validation');
+const { STATUSES, APPROVAL_STATUSES, RECURRENCE_TYPES } = require('../validations/appointmentSlotConfig.validation');
 const { STATUSES: APPOINTMENT_STATUSES } = require('../validations/appointment.validation');
+const {
+  CLOSURE_TYPES,
+  RECURRENCE_TYPES: CLOSURE_RECURRENCE_TYPES,
+  STATUSES: CLOSURE_STATUSES,
+} = require('../validations/facilityClosure.validation');
 
 const basePath = '/api/v1/appointment-admin';
 
@@ -73,8 +78,17 @@ const options = {
       {
         name: 'Slot Configs',
         description:
-          'Recurring weekly appointment slot rules for a facility service, with the ' +
-          'TENANT_USER (create+read) / TENANT_ADMIN (create+read+update+approve) approval workflow',
+          'Recurring appointment slot rules for a facility service — DAILY, WEEKLY (specific ' +
+          'day of week), or MONTHLY (specific day of month) — with the TENANT_USER ' +
+          '(create+read) / TENANT_ADMIN (create+read+update+approve) approval workflow',
+      },
+      {
+        name: 'Facility Closures',
+        description:
+          'Holidays, weekly offs, and other closures. ONE_TIME/ANNUAL use a specific date; ' +
+          'WEEKLY (a standing weekly off, e.g. "closed every Sunday") uses a day of week instead. ' +
+          'TENANT_ADMIN-only for write (no approval workflow, unlike slot configs); TENANT_USER ' +
+          'holds read only.',
       },
     ],
     components: {
@@ -152,7 +166,9 @@ const options = {
             facilityServiceId: { type: 'integer' },
             resourceId: { type: 'integer', nullable: true },
             resourceName: { type: 'string', nullable: true, example: 'Dr. A. Sharma' },
-            dayOfWeek: { type: 'integer', minimum: 1, maximum: 7, description: '1=Monday ... 7=Sunday (ISO-8601)' },
+            recurrenceType: { type: 'string', enum: [...RECURRENCE_TYPES] },
+            dayOfWeek: { type: 'integer', minimum: 1, maximum: 7, nullable: true, description: '1=Monday ... 7=Sunday (ISO-8601). Set only when recurrenceType is WEEKLY.' },
+            dayOfMonth: { type: 'integer', minimum: 1, maximum: 31, nullable: true, description: 'Set only when recurrenceType is MONTHLY.' },
             startTime: { type: 'string', example: '09:00' },
             endTime: { type: 'string', example: '13:00' },
             slotDurationMinutes: { type: 'integer', example: 30 },
@@ -171,12 +187,18 @@ const options = {
         },
         SlotConfigCreateRequest: {
           type: 'object',
-          required: ['facilityId', 'facilityServiceId', 'dayOfWeek', 'startTime', 'endTime', 'slotDurationMinutes', 'effectiveFrom'],
+          required: ['facilityId', 'facilityServiceId', 'recurrenceType', 'startTime', 'endTime', 'slotDurationMinutes', 'effectiveFrom'],
+          description:
+            'dayOfWeek is required (and dayOfMonth must be omitted) when recurrenceType is WEEKLY. ' +
+            'dayOfMonth is required (and dayOfWeek must be omitted) when recurrenceType is MONTHLY. ' +
+            'Neither is set when recurrenceType is DAILY.',
           properties: {
             facilityId: { type: 'integer' },
             facilityServiceId: { type: 'integer' },
             resourceId: { type: 'integer', nullable: true, description: 'Optional — omit for a service-level rule with no specific doctor/counter/equipment.' },
-            dayOfWeek: { type: 'integer', minimum: 1, maximum: 7 },
+            recurrenceType: { type: 'string', enum: [...RECURRENCE_TYPES] },
+            dayOfWeek: { type: 'integer', minimum: 1, maximum: 7, nullable: true },
+            dayOfMonth: { type: 'integer', minimum: 1, maximum: 31, nullable: true },
             startTime: { type: 'string', example: '09:00' },
             endTime: { type: 'string', example: '13:00' },
             slotDurationMinutes: { type: 'integer', minimum: 1, maximum: 480 },
@@ -188,9 +210,14 @@ const options = {
         SlotConfigUpdateRequest: {
           type: 'object',
           minProperties: 1,
+          description:
+            'Switching recurrenceType auto-clears whichever day field no longer applies if the ' +
+            'request does not itself set it — see appointmentSlotConfigService.js#update.',
           properties: {
             resourceId: { type: 'integer', nullable: true },
-            dayOfWeek: { type: 'integer', minimum: 1, maximum: 7 },
+            recurrenceType: { type: 'string', enum: [...RECURRENCE_TYPES] },
+            dayOfWeek: { type: 'integer', minimum: 1, maximum: 7, nullable: true },
+            dayOfMonth: { type: 'integer', minimum: 1, maximum: 31, nullable: true },
             startTime: { type: 'string', example: '09:00' },
             endTime: { type: 'string', example: '13:00' },
             slotDurationMinutes: { type: 'integer', minimum: 1, maximum: 480 },
@@ -234,6 +261,62 @@ const options = {
             rescheduledFromAppointmentId: { type: 'integer', nullable: true },
             notes: { type: 'string', nullable: true },
             ...auditFields,
+          },
+        },
+        FacilityClosure: {
+          type: 'object',
+          properties: {
+            closureId: { type: 'integer', example: 301 },
+            closureUuid: { type: 'string', format: 'uuid' },
+            tenantUuid: { type: 'string', format: 'uuid' },
+            facilityId: { type: 'integer', nullable: true, description: 'NULL = applies to every facility in the tenant.' },
+            facilityServiceId: { type: 'integer', nullable: true, description: 'NULL = whole facility.' },
+            resourceId: { type: 'integer', nullable: true },
+            resourceName: { type: 'string', nullable: true },
+            closureType: { type: 'string', enum: [...CLOSURE_TYPES] },
+            recurrenceType: { type: 'string', enum: [...CLOSURE_RECURRENCE_TYPES] },
+            closureDate: { type: 'string', format: 'date', nullable: true, description: 'Set when recurrenceType is ONE_TIME or ANNUAL (for ANNUAL, only month+day are reused each year).' },
+            dayOfWeek: { type: 'integer', minimum: 1, maximum: 7, nullable: true, description: 'Set only when recurrenceType is WEEKLY (a standing weekly off).' },
+            closureName: { type: 'string', example: 'Republic Day' },
+            reason: { type: 'string', nullable: true },
+            status: { type: 'string', enum: [...CLOSURE_STATUSES] },
+            createdBy: { type: 'integer', nullable: true },
+            modifiedBy: { type: 'integer', nullable: true },
+            ...auditFields,
+          },
+        },
+        FacilityClosureCreateRequest: {
+          type: 'object',
+          required: ['closureType', 'recurrenceType', 'closureName'],
+          description:
+            'closureDate is required when recurrenceType is ONE_TIME or ANNUAL. dayOfWeek is ' +
+            'required when recurrenceType is WEEKLY. The two are mutually exclusive.',
+          properties: {
+            facilityId: { type: 'integer', nullable: true },
+            facilityServiceId: { type: 'integer', nullable: true },
+            resourceId: { type: 'integer', nullable: true },
+            closureType: { type: 'string', enum: [...CLOSURE_TYPES] },
+            recurrenceType: { type: 'string', enum: [...CLOSURE_RECURRENCE_TYPES] },
+            closureDate: { type: 'string', format: 'date', nullable: true },
+            dayOfWeek: { type: 'integer', minimum: 1, maximum: 7, nullable: true },
+            closureName: { type: 'string', maxLength: 150, example: 'Republic Day' },
+            reason: { type: 'string', maxLength: 500, nullable: true },
+          },
+        },
+        FacilityClosureUpdateRequest: {
+          type: 'object',
+          minProperties: 1,
+          properties: {
+            facilityId: { type: 'integer', nullable: true },
+            facilityServiceId: { type: 'integer', nullable: true },
+            resourceId: { type: 'integer', nullable: true },
+            closureType: { type: 'string', enum: [...CLOSURE_TYPES] },
+            recurrenceType: { type: 'string', enum: [...CLOSURE_RECURRENCE_TYPES] },
+            closureDate: { type: 'string', format: 'date', nullable: true },
+            dayOfWeek: { type: 'integer', minimum: 1, maximum: 7, nullable: true },
+            closureName: { type: 'string', maxLength: 150 },
+            reason: { type: 'string', maxLength: 500, nullable: true },
+            status: { type: 'string', enum: [...CLOSURE_STATUSES] },
           },
         },
       },

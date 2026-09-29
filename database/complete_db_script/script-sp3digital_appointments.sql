@@ -72,7 +72,15 @@ CREATE TABLE `appointment_slot_configs` (
   `facility_id` bigint unsigned NOT NULL,
   `facility_service_id` bigint unsigned NOT NULL,
   `resource_id` bigint unsigned DEFAULT NULL,
-  `day_of_week` tinyint unsigned NOT NULL,
+  -- How this time window recurs. DAILY needs neither day_of_week nor
+  -- day_of_month (it applies every day in the effective range); WEEKLY
+  -- needs day_of_week; MONTHLY needs day_of_month. Enforced at the
+  -- application layer (appointmentSlotConfig.validation.js), not by a DB
+  -- CHECK constraint, consistent with how status/approval_status enums
+  -- are validated elsewhere in this schema.
+  `recurrence_type` varchar(20) NOT NULL DEFAULT 'WEEKLY',
+  `day_of_week` tinyint unsigned DEFAULT NULL,   -- 1=Mon ... 7=Sun (ISO-8601) — required when recurrence_type=WEEKLY
+  `day_of_month` tinyint unsigned DEFAULT NULL,  -- 1-31 — required when recurrence_type=MONTHLY
   `start_time` time NOT NULL,
   `end_time` time NOT NULL,
   `slot_duration_minutes` smallint unsigned NOT NULL,
@@ -161,9 +169,16 @@ CREATE TABLE `facility_closures` (
   `facility_id` bigint unsigned DEFAULT NULL,
   `facility_service_id` bigint unsigned DEFAULT NULL,
   `resource_id` bigint unsigned DEFAULT NULL,
-  `closure_type` varchar(30) NOT NULL,
+  `closure_type` varchar(30) NOT NULL,               -- HOLIDAY / WEEKLY_OFF / EMERGENCY / MAINTENANCE / OTHER
+  -- ONE_TIME needs closure_date (a specific date, e.g. an emergency
+  -- closure). WEEKLY needs day_of_week (a standing weekly off, e.g.
+  -- "closed every Sunday", recurring indefinitely). ANNUAL needs
+  -- closure_date, but only its month+day are reused each year (e.g.
+  -- Republic Day). Enforced at the application layer, same reasoning as
+  -- appointment_slot_configs' recurrence_type above.
   `recurrence_type` varchar(20) NOT NULL DEFAULT 'ONE_TIME',
-  `closure_date` date NOT NULL,
+  `closure_date` date DEFAULT NULL,                  -- required for ONE_TIME / ANNUAL
+  `day_of_week` tinyint unsigned DEFAULT NULL,        -- 1=Mon ... 7=Sun — required for WEEKLY
   `closure_name` varchar(150) NOT NULL,
   `reason` varchar(500) DEFAULT NULL,
   `status` varchar(30) NOT NULL DEFAULT 'ACTIVE',

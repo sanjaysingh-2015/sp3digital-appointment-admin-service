@@ -72,6 +72,7 @@ function validPayload(overrides = {}) {
   return {
     facilityId: 1,
     facilityServiceId: 1,
+    recurrenceType: 'WEEKLY',
     dayOfWeek: 1,
     startTime: '09:00',
     endTime: '13:00',
@@ -147,6 +148,97 @@ test('a caller with no CREATE permission is rejected', async () => {
   const { status, json } = await call('POST', BASE, { token, body: validPayload() });
   assert.equal(status, 403);
   assert.equal(json.error.code, 'INSUFFICIENT_PERMISSION');
+});
+
+// ---------------------------------------------------------------------
+// RECURRENCE — DAILY / WEEKLY / MONTHLY
+// ---------------------------------------------------------------------
+
+test('creates a DAILY recurrence with neither dayOfWeek nor dayOfMonth', async () => {
+  const token = tokenFor(TENANT_A, 201, TENANT_ADMIN_PERMISSIONS);
+  const { status, json } = await call('POST', BASE, {
+    token,
+    body: { facilityId: 1, facilityServiceId: 1, recurrenceType: 'DAILY', startTime: '09:00', endTime: '13:00', slotDurationMinutes: 30, effectiveFrom: '2026-10-01' },
+  });
+  assert.equal(status, 201);
+  assert.equal(json.recurrenceType, 'DAILY');
+  assert.equal(json.dayOfWeek, null);
+  assert.equal(json.dayOfMonth, null);
+});
+
+test('creates a MONTHLY recurrence with dayOfMonth', async () => {
+  const token = tokenFor(TENANT_A, 201, TENANT_ADMIN_PERMISSIONS);
+  const { status, json } = await call('POST', BASE, {
+    token,
+    body: { facilityId: 1, facilityServiceId: 1, recurrenceType: 'MONTHLY', dayOfMonth: 15, startTime: '09:00', endTime: '13:00', slotDurationMinutes: 30, effectiveFrom: '2026-10-01' },
+  });
+  assert.equal(status, 201);
+  assert.equal(json.recurrenceType, 'MONTHLY');
+  assert.equal(json.dayOfMonth, 15);
+  assert.equal(json.dayOfWeek, null);
+});
+
+test('MONTHLY without dayOfMonth is rejected', async () => {
+  const token = tokenFor(TENANT_A, 201, TENANT_ADMIN_PERMISSIONS);
+  const { status, json } = await call('POST', BASE, {
+    token,
+    body: { facilityId: 1, facilityServiceId: 1, recurrenceType: 'MONTHLY', startTime: '09:00', endTime: '13:00', slotDurationMinutes: 30, effectiveFrom: '2026-10-01' },
+  });
+  assert.equal(status, 400);
+  assert.equal(json.error.code, 'VALIDATION_ERROR');
+});
+
+test('WEEKLY without dayOfWeek is rejected', async () => {
+  const token = tokenFor(TENANT_A, 201, TENANT_ADMIN_PERMISSIONS);
+  const { status, json } = await call('POST', BASE, {
+    token,
+    body: { facilityId: 1, facilityServiceId: 1, recurrenceType: 'WEEKLY', startTime: '09:00', endTime: '13:00', slotDurationMinutes: 30, effectiveFrom: '2026-10-01' },
+  });
+  assert.equal(status, 400);
+});
+
+test('DAILY with a dayOfWeek set anyway is rejected', async () => {
+  const token = tokenFor(TENANT_A, 201, TENANT_ADMIN_PERMISSIONS);
+  const { status, json } = await call('POST', BASE, {
+    token,
+    body: { facilityId: 1, facilityServiceId: 1, recurrenceType: 'DAILY', dayOfWeek: 3, startTime: '09:00', endTime: '13:00', slotDurationMinutes: 30, effectiveFrom: '2026-10-01' },
+  });
+  assert.equal(status, 400);
+});
+
+test('switching recurrenceType from WEEKLY to MONTHLY via PATCH requires dayOfMonth in the same request', async () => {
+  const adminToken = tokenFor(TENANT_A, 201, TENANT_ADMIN_PERMISSIONS);
+  const created = await call('POST', BASE, { token: adminToken, body: validPayload({ dayOfWeek: 6 }) });
+  assert.equal(created.status, 201);
+
+  // Switching type without supplying the new required field: rejected —
+  // the stale WEEKLY dayOfWeek is auto-cleared, but nothing fills in for
+  // MONTHLY's dayOfMonth, so the merged effective state is invalid.
+  const badSwitch = await call('PATCH', `${BASE}/${created.json.slotConfigId}`, {
+    token: adminToken,
+    body: { recurrenceType: 'MONTHLY' },
+  });
+  assert.equal(badSwitch.status, 400);
+  assert.equal(badSwitch.json.error.code, 'INVALID_RECURRENCE_FIELDS');
+
+  // Supplying both in the same request succeeds, and the stale dayOfWeek
+  // is cleared automatically.
+  const goodSwitch = await call('PATCH', `${BASE}/${created.json.slotConfigId}`, {
+    token: adminToken,
+    body: { recurrenceType: 'MONTHLY', dayOfMonth: 10 },
+  });
+  assert.equal(goodSwitch.status, 200);
+  assert.equal(goodSwitch.json.recurrenceType, 'MONTHLY');
+  assert.equal(goodSwitch.json.dayOfMonth, 10);
+  assert.equal(goodSwitch.json.dayOfWeek, null);
+});
+
+test('filters the list by recurrenceType', async () => {
+  const token = tokenFor(TENANT_A, 201, TENANT_ADMIN_PERMISSIONS);
+  const { status, json } = await call('GET', `${BASE}?recurrenceType=DAILY`, { token });
+  assert.equal(status, 200);
+  assert.ok(json.data.length >= 1);
+  assert.ok(json.data.every((row) => row.recurrenceType === 'DAILY'));
 });
 
 // ---------------------------------------------------------------------

@@ -16,12 +16,13 @@ class AppointmentSlotConfigController {
 
   getList = async (req, res, next) => {
     try {
-      const { page, limit, facilityId, facilityServiceId, approvalStatus, status } = req.query;
+      const { page, limit, facilityId, facilityServiceId, recurrenceType, approvalStatus, status } = req.query;
       const result = await appointmentSlotConfigService.getList({
         page,
         limit,
         facilityId,
         facilityServiceId,
+        recurrenceType,
         approvalStatus,
         status,
         tenantUuid: req.auth.tenantUuid,

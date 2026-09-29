@@ -34,4 +34,19 @@ const APPOINTMENT_PERMISSIONS = {
   READ: 'appointment-admin:appointment:read',
 };
 
-module.exports = { SLOT_CONFIG_PERMISSIONS, APPOINTMENT_PERMISSIONS };
+/**
+ * Fine-grained permission codes for facility closures (holidays / weekly
+ * offs / emergency closures). No maker-checker workflow here, unlike slot
+ * configs — closing a facility is treated as an administrative decision,
+ * so it's TENANT_ADMIN-only for write; TENANT_USER gets READ only (they
+ * can see the holiday calendar, not change it). See identity-admin
+ * -service's database/seeds/facility-closure-rbac.sql for the actual
+ * grants.
+ */
+const FACILITY_CLOSURE_PERMISSIONS = {
+  CREATE: 'appointment-admin:facility-closure:create',
+  READ: 'appointment-admin:facility-closure:read',
+  UPDATE: 'appointment-admin:facility-closure:update',
+};
+
+module.exports = { SLOT_CONFIG_PERMISSIONS, APPOINTMENT_PERMISSIONS, FACILITY_CLOSURE_PERMISSIONS };

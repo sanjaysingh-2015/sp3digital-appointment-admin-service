@@ -11,7 +11,11 @@ module.exports = (sequelize, DataTypes) => {
       facilityId: { type: DataTypes.BIGINT, allowNull: false, field: 'facility_id' },
       facilityServiceId: { type: DataTypes.BIGINT, allowNull: false, field: 'facility_service_id' },
       resourceId: { type: DataTypes.BIGINT, allowNull: true, field: 'resource_id' },
-      dayOfWeek: { type: DataTypes.TINYINT, allowNull: false, field: 'day_of_week' }, // 1=Mon ... 7=Sun (ISO-8601)
+      // DAILY / WEEKLY / MONTHLY — see appointmentSlotConfig.validation.js
+      // for which of dayOfWeek/dayOfMonth each one requires.
+      recurrenceType: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'WEEKLY', field: 'recurrence_type' },
+      dayOfWeek: { type: DataTypes.TINYINT, allowNull: true, field: 'day_of_week' }, // 1=Mon ... 7=Sun (ISO-8601) — required when recurrenceType=WEEKLY
+      dayOfMonth: { type: DataTypes.TINYINT, allowNull: true, field: 'day_of_month' }, // 1-31 — required when recurrenceType=MONTHLY
       startTime: { type: DataTypes.TIME, allowNull: false, field: 'start_time' },
       endTime: { type: DataTypes.TIME, allowNull: false, field: 'end_time' },
       slotDurationMinutes: { type: DataTypes.SMALLINT, allowNull: false, field: 'slot_duration_minutes' },
