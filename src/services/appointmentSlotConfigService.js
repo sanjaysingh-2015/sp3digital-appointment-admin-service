@@ -3,6 +3,9 @@ const { toSequelizePage, buildEnvelope } = require('../utils/pagination');
 const { SLOT_CONFIG_PERMISSIONS } = require('../utils/permissions');
 const { hasPermission } = require('../middleware/authentication');
 const { validateRecurrenceFields } = require('../validations/appointmentSlotConfig.validation');
+const { resolveProviderResource } = require('./providerResourceService');
+
+const isoDay = (value) => (value ? new Date(value).toISOString().slice(0, 10) : null);
 
 function notFound(message = 'Slot configuration not found') {
   const error = new Error(message);
@@ -39,6 +42,8 @@ function toResponse(slotConfig) {
     facilityServiceId: plain.facilityServiceId,
     resourceId: plain.resourceId,
     resourceName: plain.resource?.resourceName ?? null,
+    providerId: plain.resource?.providerId ?? null,
+    providerAffiliationId: plain.resource?.providerAffiliationId ?? null,
     recurrenceType: plain.recurrenceType,
     dayOfWeek: plain.dayOfWeek,
     dayOfMonth: plain.dayOfMonth,
@@ -60,7 +65,7 @@ function toResponse(slotConfig) {
   };
 }
 
-const RESOURCE_INCLUDE = [{ model: FacilityResource, as: 'resource', attributes: ['resourceId', 'resourceName'] }];
+const RESOURCE_INCLUDE = [{ model: FacilityResource, as: 'resource', attributes: ['resourceId', 'resourceName', 'providerId', 'providerAffiliationId'] }];
 
 class AppointmentSlotConfigService {
   /**
@@ -70,7 +75,22 @@ class AppointmentSlotConfigService {
    * moment later anyway, so a self-review step adds friction with no
    * actual safety benefit.
    */
-  async create(payload, { tenantUuid, userId, scopes }) {
+  async create(payload, { tenantUuid, userId, scopes, token }) {
+    let resourceId = payload.resourceId ?? null;
+    if (payload.providerAffiliationId) {
+      const { resource } = await resolveProviderResource({
+        providerAffiliationId: payload.providerAffiliationId,
+        facilityId: payload.facilityId,
+        facilityServiceId: payload.facilityServiceId,
+        slotBased: true,
+        window: { from: payload.effectiveFrom, to: payload.effectiveTo },
+        tenantUuid,
+        userId,
+        token,
+      });
+      resourceId = resource.resourceId;
+    }
+
     const canApprove = hasPermission(scopes, SLOT_CONFIG_PERMISSIONS.APPROVE);
     const now = new Date();
 
@@ -78,7 +98,7 @@ class AppointmentSlotConfigService {
       tenantUuid,
       facilityId: payload.facilityId,
       facilityServiceId: payload.facilityServiceId,
-      resourceId: payload.resourceId ?? null,
+      resourceId,
       recurrenceType: payload.recurrenceType,
       dayOfWeek: payload.dayOfWeek ?? null,
       dayOfMonth: payload.dayOfMonth ?? null,
@@ -106,7 +126,7 @@ class AppointmentSlotConfigService {
    * `approvalStatus` filter lets a TENANT_ADMIN pull just their review
    * queue with ?approvalStatus=PENDING_APPROVAL.
    */
-  async getList({ page, limit, tenantUuid, facilityId, facilityServiceId, recurrenceType, approvalStatus, status }) {
+  async getList({ page, limit, tenantUuid, facilityId, facilityServiceId, providerId, providerAffiliationId, recurrenceType, approvalStatus, status }) {
     const { limit: safeLimit, offset, page: safePage } = toSequelizePage({ page, limit });
 
     const where = { tenant_uuid: tenantUuid };
@@ -116,12 +136,21 @@ class AppointmentSlotConfigService {
     if (approvalStatus) where.approval_status = approvalStatus;
     if (status) where.status = status;
 
+    // Filtering by doctor means "only rules whose resource is that doctor".
+    const include = [{ ...RESOURCE_INCLUDE[0] }];
+    if (providerId || providerAffiliationId) {
+      include[0].required = true;
+      include[0].where = {};
+      if (providerId) include[0].where.provider_id = providerId;
+      if (providerAffiliationId) include[0].where.provider_affiliation_id = providerAffiliationId;
+    }
+
     const result = await AppointmentSlotConfig.findAndCountAll({
       where,
       limit: safeLimit,
       offset,
       order: [['createdOn', 'DESC']],
-      include: RESOURCE_INCLUDE,
+      include,
     });
 
     return buildEnvelope(
@@ -151,11 +180,12 @@ class AppointmentSlotConfigService {
    * dayOfWeek (or vice versa) is rejected rather than silently leaving
    * stale, contradictory fields set.
    */
-  async update(slotConfigId, patch, { tenantUuid, userId }) {
+  async update(slotConfigId, rawPatch, { tenantUuid, userId, token }) {
     const slotConfig = await AppointmentSlotConfig.findOne({
       where: { slot_config_id: slotConfigId, tenant_uuid: tenantUuid },
     });
     if (!slotConfig) throw notFound();
+    const patch = { ...rawPatch };
 
     const effective = {
       recurrenceType: patch.recurrenceType ?? slotConfig.recurrenceType,
@@ -171,6 +201,40 @@ class AppointmentSlotConfigService {
     }
     const recurrenceError = validateRecurrenceFields(effective);
     if (recurrenceError) throw invalidRecurrence(recurrenceError);
+
+    // Doctor on the rule: re-check the doctor when it is changed, or when the
+    // rule's dates move (they must stay inside the doctor's placement dates).
+    const providerTouched = 'providerAffiliationId' in patch;
+    // The UI resends every field on edit, so compare with what is stored: an unchanged
+    // date must not trigger a doctor re-check (the doctor may have been suspended since).
+    const datesTouched =
+      ('effectiveFrom' in patch && isoDay(patch.effectiveFrom) !== isoDay(slotConfig.effectiveFrom)) ||
+      ('effectiveTo' in patch && isoDay(patch.effectiveTo) !== isoDay(slotConfig.effectiveTo));
+    let currentAffiliationId = null;
+    if (slotConfig.resourceId) {
+      const current = await FacilityResource.findByPk(slotConfig.resourceId, { attributes: ['providerAffiliationId'] });
+      currentAffiliationId = current?.providerAffiliationId ?? null;
+    }
+    const targetAffiliationId = providerTouched ? patch.providerAffiliationId : currentAffiliationId;
+    if (targetAffiliationId && (providerTouched || datesTouched)) {
+      const { resource } = await resolveProviderResource({
+        providerAffiliationId: targetAffiliationId,
+        facilityId: slotConfig.facilityId,
+        facilityServiceId: slotConfig.facilityServiceId,
+        slotBased: true,
+        window: {
+          from: 'effectiveFrom' in patch ? patch.effectiveFrom : slotConfig.effectiveFrom,
+          to: 'effectiveTo' in patch ? patch.effectiveTo : slotConfig.effectiveTo,
+        },
+        tenantUuid,
+        userId,
+        token,
+      });
+      patch.resourceId = resource.resourceId;
+    } else if (providerTouched) {
+      patch.resourceId = null; // doctor removed from the rule
+    }
+    delete patch.providerAffiliationId;
 
     await slotConfig.update({ ...patch, ...effective, modifiedBy: userId || null, modifiedOn: new Date() });
     await slotConfig.reload({ include: RESOURCE_INCLUDE });

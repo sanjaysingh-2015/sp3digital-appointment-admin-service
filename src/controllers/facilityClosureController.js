@@ -6,6 +6,7 @@ class FacilityClosureController {
       const closure = await facilityClosureService.create(req.body, {
         tenantUuid: req.auth.tenantUuid,
         userId: req.auth.userId,
+        token: req.auth.rawToken,
       });
       return res.status(201).json(closure);
     } catch (error) {
@@ -15,12 +16,13 @@ class FacilityClosureController {
 
   getList = async (req, res, next) => {
     try {
-      const { page, limit, facilityId, facilityServiceId, closureType, recurrenceType, status } = req.query;
+      const { page, limit, facilityId, facilityServiceId, providerId, closureType, recurrenceType, status } = req.query;
       const result = await facilityClosureService.getList({
         page,
         limit,
         facilityId,
         facilityServiceId,
+        providerId,
         closureType,
         recurrenceType,
         status,
@@ -48,6 +50,7 @@ class FacilityClosureController {
       const closure = await facilityClosureService.update(req.params.id, req.body, {
         tenantUuid: req.auth.tenantUuid,
         userId: req.auth.userId,
+        token: req.auth.rawToken,
       });
       return res.status(200).json(closure);
     } catch (error) {

@@ -30,6 +30,8 @@ const createSchema = Joi.object({
   facilityId: Joi.number().integer().positive().optional().allow(null), // NULL = every facility in the tenant
   facilityServiceId: Joi.number().integer().positive().optional().allow(null), // NULL = whole facility
   resourceId: Joi.number().integer().positive().optional().allow(null),
+  // Doctor leave: a doctor placement in provider-admin-service (needs facilityServiceId too).
+  providerAffiliationId: Joi.number().integer().positive().optional().allow(null),
   closureType: Joi.string().valid(...CLOSURE_TYPES).required(),
   recurrenceType: Joi.string().valid(...RECURRENCE_TYPES).required(),
   closureDate: Joi.date().iso().optional().allow(null),
@@ -38,13 +40,16 @@ const createSchema = Joi.object({
   reason: Joi.string().max(500).optional().allow('', null),
 }).custom((value, helpers) => {
   const error = validateRecurrenceFields(value);
-  return error ? helpers.message(error) : value;
+  if (error) return helpers.message(error);
+  if (value.resourceId && value.providerAffiliationId) return helpers.message('Send either resourceId or providerAffiliationId, not both');
+  return value;
 });
 
 const updateSchema = Joi.object({
   facilityId: Joi.number().integer().positive().optional().allow(null),
   facilityServiceId: Joi.number().integer().positive().optional().allow(null),
   resourceId: Joi.number().integer().positive().optional().allow(null),
+  providerAffiliationId: Joi.number().integer().positive().optional().allow(null), // null = remove the doctor
   closureType: Joi.string().valid(...CLOSURE_TYPES).optional(),
   recurrenceType: Joi.string().valid(...RECURRENCE_TYPES).optional(),
   closureDate: Joi.date().iso().optional().allow(null),
@@ -52,11 +57,14 @@ const updateSchema = Joi.object({
   closureName: Joi.string().max(150).optional(),
   reason: Joi.string().max(500).optional().allow('', null),
   status: Joi.string().valid(...STATUSES).optional(),
-}).min(1);
+}).min(1).custom((value, helpers) => (
+  value.resourceId && value.providerAffiliationId ? helpers.message('Send either resourceId or providerAffiliationId, not both') : value
+));
 
 const listQuerySchema = paginationQuerySchema({
   facilityId: Joi.number().integer().positive().optional(),
   facilityServiceId: Joi.number().integer().positive().optional(),
+  providerId: Joi.number().integer().positive().optional(),
   closureType: Joi.string().valid(...CLOSURE_TYPES, '').optional(),
   recurrenceType: Joi.string().valid(...RECURRENCE_TYPES, '').optional(),
   status: Joi.string().valid(...STATUSES, '').optional(),

@@ -49,6 +49,8 @@ const createSchema = timeRangeRule(
     facilityId: Joi.number().integer().positive().required(),
     facilityServiceId: Joi.number().integer().positive().required(),
     resourceId: Joi.number().integer().positive().optional().allow(null),
+    // A doctor placement in provider-admin-service; the matching resource is created on demand.
+    providerAffiliationId: Joi.number().integer().positive().optional().allow(null),
     recurrenceType: Joi.string().valid(...RECURRENCE_TYPES).required(),
     dayOfWeek: Joi.number().integer().min(1).max(7).optional().allow(null), // 1=Mon ... 7=Sun — required when recurrenceType=WEEKLY
     dayOfMonth: Joi.number().integer().min(1).max(31).optional().allow(null), // required when recurrenceType=MONTHLY
@@ -60,13 +62,16 @@ const createSchema = timeRangeRule(
     effectiveTo: Joi.date().iso().min(Joi.ref('effectiveFrom')).optional().allow(null),
   }).custom((value, helpers) => {
     const error = validateRecurrenceFields(value);
-    return error ? helpers.message(error) : value;
+    if (error) return helpers.message(error);
+    if (value.resourceId && value.providerAffiliationId) return helpers.message('Send either resourceId or providerAffiliationId, not both');
+    return value;
   }),
 );
 
 const updateSchema = timeRangeRule(
   Joi.object({
     resourceId: Joi.number().integer().positive().optional().allow(null),
+    providerAffiliationId: Joi.number().integer().positive().optional().allow(null), // null = remove the doctor
     recurrenceType: Joi.string().valid(...RECURRENCE_TYPES).optional(),
     dayOfWeek: Joi.number().integer().min(1).max(7).optional().allow(null),
     dayOfMonth: Joi.number().integer().min(1).max(31).optional().allow(null),
@@ -77,12 +82,16 @@ const updateSchema = timeRangeRule(
     effectiveFrom: Joi.date().iso().optional(),
     effectiveTo: Joi.date().iso().optional().allow(null),
     status: Joi.string().valid(...STATUSES).optional(),
-  }).min(1),
+  }).min(1).custom((value, helpers) => (
+    value.resourceId && value.providerAffiliationId ? helpers.message('Send either resourceId or providerAffiliationId, not both') : value
+  )),
 );
 
 const listQuerySchema = paginationQuerySchema({
   facilityId: Joi.number().integer().positive().optional(),
   facilityServiceId: Joi.number().integer().positive().optional(),
+  providerId: Joi.number().integer().positive().optional(),
+  providerAffiliationId: Joi.number().integer().positive().optional(),
   recurrenceType: Joi.string().valid(...RECURRENCE_TYPES, '').optional(),
   approvalStatus: Joi.string().valid(...APPROVAL_STATUSES, '').optional(),
   status: Joi.string().valid(...STATUSES, '').optional(),

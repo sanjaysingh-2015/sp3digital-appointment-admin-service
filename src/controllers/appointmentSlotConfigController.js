@@ -7,6 +7,7 @@ class AppointmentSlotConfigController {
         tenantUuid: req.auth.tenantUuid,
         userId: req.auth.userId,
         scopes: req.auth.scopes,
+        token: req.auth.rawToken,
       });
       return res.status(201).json(slotConfig);
     } catch (error) {
@@ -16,12 +17,14 @@ class AppointmentSlotConfigController {
 
   getList = async (req, res, next) => {
     try {
-      const { page, limit, facilityId, facilityServiceId, recurrenceType, approvalStatus, status } = req.query;
+      const { page, limit, facilityId, facilityServiceId, providerId, providerAffiliationId, recurrenceType, approvalStatus, status } = req.query;
       const result = await appointmentSlotConfigService.getList({
         page,
         limit,
         facilityId,
         facilityServiceId,
+        providerId,
+        providerAffiliationId,
         recurrenceType,
         approvalStatus,
         status,
@@ -49,6 +52,7 @@ class AppointmentSlotConfigController {
       const slotConfig = await appointmentSlotConfigService.update(req.params.id, req.body, {
         tenantUuid: req.auth.tenantUuid,
         userId: req.auth.userId,
+        token: req.auth.rawToken,
       });
       return res.status(200).json(slotConfig);
     } catch (error) {

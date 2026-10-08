@@ -45,6 +45,8 @@ CREATE TABLE `facility_resources` (
   `facility_service_id` bigint unsigned NOT NULL,
   `resource_type` varchar(30) NOT NULL,
   `resource_name` varchar(150) NOT NULL,
+  `provider_id` bigint unsigned DEFAULT NULL,             -- provider-admin-service doctor (resource_type 'PROVIDER'); cross-database, no FK
+  `provider_affiliation_id` bigint unsigned DEFAULT NULL, -- the doctor's placement at this facility; the row is created on first use
   `external_user_id` bigint unsigned DEFAULT NULL,
   `status` varchar(30) NOT NULL DEFAULT 'ACTIVE',
   `created_by` bigint unsigned DEFAULT NULL,
@@ -53,6 +55,9 @@ CREATE TABLE `facility_resources` (
   `modified_on` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`resource_id`),
   UNIQUE KEY `uk_resources_uuid` (`resource_uuid`),
+  -- One resource per doctor placement per service (MySQL ignores NULLs, so non-doctor resources never collide).
+  UNIQUE KEY `uk_resources_provider_service` (`provider_affiliation_id`,`facility_service_id`),
+  KEY `idx_resources_provider` (`provider_id`),
   KEY `idx_resources_tenant` (`tenant_uuid`),
   KEY `idx_resources_facility` (`facility_id`),
   KEY `idx_resources_facility_service` (`facility_service_id`)

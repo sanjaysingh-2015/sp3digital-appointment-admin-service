@@ -13,6 +13,11 @@ module.exports = (sequelize, DataTypes) => {
       facilityServiceId: { type: DataTypes.BIGINT, allowNull: false, field: 'facility_service_id' },
       resourceType: { type: DataTypes.STRING(30), allowNull: false, field: 'resource_type' },
       resourceName: { type: DataTypes.STRING(150), allowNull: false, field: 'resource_name' },
+      // A doctor placement in sp3digital-provider-admin-service (cross-database, no
+      // FK). Set when resourceType is 'PROVIDER'; the row is created on demand the
+      // first time a doctor is attached to a slot rule or closure for that service.
+      providerId: { type: DataTypes.BIGINT, allowNull: true, field: 'provider_id' },
+      providerAffiliationId: { type: DataTypes.BIGINT, allowNull: true, field: 'provider_affiliation_id' },
       externalUserId: { type: DataTypes.BIGINT, allowNull: true, field: 'external_user_id' },
       status: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'ACTIVE', field: 'status' },
       createdBy: { type: DataTypes.BIGINT, allowNull: true, field: 'created_by' },
@@ -28,6 +33,9 @@ module.exports = (sequelize, DataTypes) => {
         { fields: ['tenant_uuid'] },
         { fields: ['facility_id'] },
         { fields: ['facility_service_id'] },
+        // One resource per doctor placement per service (NULLs, i.e. non-doctor
+        // resources, never collide).
+        { unique: true, fields: ['provider_affiliation_id', 'facility_service_id'] },
       ],
     },
   );

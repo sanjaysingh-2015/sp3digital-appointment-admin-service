@@ -95,3 +95,23 @@ identity-admin-service, using the exact same `ADMIN_JWT_SECRET` /
 `ADMIN_JWKS_URL` verification logic as organization-admin-service (kept
 byte-for-byte in sync on purpose — see the comment atop
 `src/middleware/authentication.js`).
+
+## Doctors on slot rules and closures
+
+A slot rule (or a closure, for a doctor's leave) can be given to a doctor
+registered in `sp3digital-provider-admin-service` by sending
+`providerAffiliationId` instead of `resourceId`. The service checks, with the
+caller's own token forwarded to the provider service, that the doctor is
+**active and verified**, the placement is **active**, it is at **this facility**
+and delivers **this service**, and (for slot rules) that the rule's dates sit
+inside the placement's validity dates. Only PHYSICAL and REMOTE placements use
+fixed slots; on-demand / on-call placements are rejected for slot rules.
+
+The matching `facility_resources` row (`resource_type = 'PROVIDER'`) is created
+on first use, one per doctor placement per service, so slots, closures and
+appointments keep pointing at `resource_id` exactly as before. List endpoints
+accept `?providerId=` / `?providerAffiliationId=`; responses carry `providerId`
+and `providerAffiliationId`. A doctor's leave needs the service chosen (their
+slots are per service). Set `PROVIDER_SERVICE_URL`; run
+`database/complete_db_script/2026-10-08-add-provider-link-to-resources.sql` on
+an existing database first.

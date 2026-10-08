@@ -112,6 +112,7 @@ async function authenticate(req, res, next) {
       req.auth = {
         tenantUuid,
         userId: null,
+        rawToken: null,
         isInternalService: true,
         scopes: new Set(['ALL_PERMISSIONS']),
       };
@@ -126,6 +127,8 @@ async function authenticate(req, res, next) {
 
     req.auth = {
       claims,
+      // Forwarded to provider-admin-service so its tenant scoping applies.
+      rawToken: token,
       tenantUuid,
       userId: claims.user_id ?? claims.userId ?? null,
       isInternalService: false,
