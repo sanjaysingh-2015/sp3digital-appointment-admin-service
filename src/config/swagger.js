@@ -72,8 +72,15 @@ const options = {
       {
         name: 'Appointments',
         description:
-          'Read-only appointment list/search. SUPERADMIN sees every tenant\'s appointments; ' +
-          'TENANT_ADMIN and TENANT_USER see only their own tenant\'s.',
+          'Appointment list/search, front-desk booking, cancel and reschedule. Booking is allowed only ' +
+          'for slots that start after the current time. SUPERADMIN sees every tenant\'s appointments; ' +
+          'everyone else sees only their own tenant\'s.',
+      },
+      {
+        name: 'Slots',
+        description:
+          'The dated, bookable slots produced from approved slot rules: search open slots, and generate ' +
+          'them (also run nightly by `npm run generate-slots`).',
       },
       {
         name: 'Slot Configs',

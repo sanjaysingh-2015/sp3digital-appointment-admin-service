@@ -4,6 +4,7 @@
   "description": "SP3 Digital Appointment Configuration service — recurring slot rules, facility closures, and the TENANT_USER/TENANT_ADMIN maker-checker approval workflow for slot configuration.",
   "main": "index.js",
   "scripts": {
+    "generate-slots": "node scripts/generate-slots.js",
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "test": "node --test"

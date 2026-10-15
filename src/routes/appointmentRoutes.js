@@ -6,12 +6,11 @@ const { validate, id } = require('../middleware/validate');
 const { authorize } = require('../middleware/authentication');
 const { APPOINTMENT_PERMISSIONS } = require('../utils/permissions');
 const { listQuerySchema, idParam } = require('../validations/appointment.validation');
+const { bookSchema, cancelSchema, rescheduleSchema } = require('../validations/booking.validation');
+const bookingController = require('../controllers/bookingController');
 
 // Route paths are relative to /api/v1/appointment-admin/appointments (see
-// app.js). Read-only — there's no create/update route here yet, since the
-// booking flow (POST /appointments from a patient-facing or front-desk
-// client) is a separate, not-yet-built feature. This is the admin
-// visibility layer ahead of that: SUPERADMIN sees every tenant's
+// app.js). The list is the admin visibility layer: SUPERADMIN sees every tenant's
 // appointments, everyone else (TENANT_ADMIN/TENANT_USER) sees only their
 // own tenant's — enforced in appointmentController.js/appointmentService.js,
 // not by anything route-level here.
@@ -68,6 +67,58 @@ const { listQuerySchema, idParam } = require('../validations/appointment.validat
  *       403: { $ref: '#/components/responses/Forbidden' }
  */
 router.get('/', authorize(APPOINTMENT_PERMISSIONS.READ), validate(listQuerySchema, 'query'), controller.getList);
+
+/**
+ * @openapi
+ * /appointments:
+ *   post:
+ *     tags: [Appointments]
+ *     summary: Book a patient into a slot (front desk)
+ *     description: >
+ *       Only slots that start after the current time can be booked. The patient is looked up in the patient service and
+ *       must be active; the doctor behind the slot must still be active, verified and placed there. The last place goes
+ *       to exactly one person. A token number is issued per doctor (or service) per day. 409 ALREADY_BOOKED / SLOT_FULL /
+ *       SAME_DAY_DUPLICATE (repeat with allowSameDay=true to confirm) / PROVIDER_NOT_BOOKABLE; 400 SLOT_IN_PAST.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [slotId, patientUuid]
+ *             properties:
+ *               slotId: { type: integer }
+ *               patientUuid: { type: string, format: uuid }
+ *               notes: { type: string }
+ *               allowSameDay: { type: boolean }
+ *     responses:
+ *       201: { description: The booked appointment with token number and history }
+ */
+router.post('/', authorize(APPOINTMENT_PERMISSIONS.CREATE), validate(bookSchema), bookingController.book);
+
+/**
+ * @openapi
+ * /appointments/{id}/cancel:
+ *   patch:
+ *     tags: [Appointments]
+ *     summary: Cancel a booked appointment that has not started
+ *     description: Needs a cancellation reason (see /cancellation-reasons). Gives the place back; a full slot opens up again.
+ *     parameters:
+ *       - { name: id, in: path, required: true, schema: { type: integer } }
+ *     responses:
+ *       200: { description: The cancelled appointment }
+ * /appointments/{id}/reschedule:
+ *   post:
+ *     tags: [Appointments]
+ *     summary: Move an appointment to another slot of the same service
+ *     description: The old appointment becomes RESCHEDULED and the new one points back to it; both slots change together or not at all.
+ *     parameters:
+ *       - { name: id, in: path, required: true, schema: { type: integer } }
+ *     responses:
+ *       201: { description: The new appointment }
+ */
+router.patch('/:id/cancel', authorize(APPOINTMENT_PERMISSIONS.UPDATE), validate(idParam, 'params'), validate(cancelSchema), bookingController.cancel);
+router.post('/:id/reschedule', authorize(APPOINTMENT_PERMISSIONS.UPDATE), validate(idParam, 'params'), validate(rescheduleSchema), bookingController.reschedule);
 
 /**
  * @openapi

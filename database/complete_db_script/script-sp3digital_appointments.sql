@@ -299,6 +299,15 @@ CREATE TABLE `appointments` (
 -- any point -> CANCELLED, etc).
 -- =============================================================
 
+CREATE TABLE `appointment_token_counters` (
+  `tenant_uuid` char(36) NOT NULL,
+  `facility_service_id` bigint unsigned NOT NULL,
+  `resource_key` bigint unsigned NOT NULL DEFAULT 0,   -- 0 = no doctor / counter
+  `token_date` date NOT NULL,
+  `last_number` int unsigned NOT NULL DEFAULT 0,
+  PRIMARY KEY (`tenant_uuid`,`facility_service_id`,`resource_key`,`token_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE `appointment_status_history` (
   `history_id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `appointment_id` bigint unsigned NOT NULL,

@@ -29,10 +29,14 @@ test.before(async () => {
   const db = require('../src/models');
   await db.sequelize.sync({ force: true });
 
-  // Seed directly via the model — there's no create endpoint for
-  // appointments yet (read-only admin visibility layer, see
-  // routes/appointmentRoutes.js's header comment).
-  const { Appointment } = db;
+  // Seed directly via the model. Appointments point at real slots (the same
+  // enforced FK as production), so the three slots they use are created first.
+  const { Appointment, AppointmentSlot } = db;
+  await AppointmentSlot.bulkCreate([
+    { slotId: 1, tenantUuid: TENANT_A, facilityId: 1, facilityServiceId: 1, slotDate: '2026-10-01', startTime: '09:00:00', endTime: '09:30:00', capacity: 1, bookedCount: 1, status: 'FULL' },
+    { slotId: 2, tenantUuid: TENANT_A, facilityId: 1, facilityServiceId: 1, slotDate: '2026-10-02', startTime: '10:00:00', endTime: '10:30:00', capacity: 1, bookedCount: 0, status: 'OPEN' },
+    { slotId: 3, tenantUuid: TENANT_B, facilityId: 5, facilityServiceId: 5, slotDate: '2026-10-01', startTime: '11:00:00', endTime: '11:30:00', capacity: 1, bookedCount: 1, status: 'FULL' },
+  ]);
   await Appointment.bulkCreate([
     {
       tenantUuid: TENANT_A, facilityId: 1, facilityServiceId: 1, slotId: 1,

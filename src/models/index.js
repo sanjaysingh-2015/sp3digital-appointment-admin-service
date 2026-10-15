@@ -5,13 +5,10 @@ const FacilityResource = require('./facilityResource.model')(sequelize, DataType
 const AppointmentSlotConfig = require('./appointmentSlotConfig.model')(sequelize, DataTypes);
 const Appointment = require('./appointment.model')(sequelize, DataTypes);
 const FacilityClosure = require('./facilityClosure.model')(sequelize, DataTypes);
-// No association declared for Appointment.slotId -> appointment_slots or
-// Appointment.cancellationReasonId -> appointment_cancellation_reasons —
-// neither of those tables has a Sequelize model in this codebase yet (only
-// slot *configs* do). This is fine for the read-only list/search endpoint
-// this model currently backs; revisit once a booking/slot-generation
-// feature actually writes to this table and needs those relations.
-
+const AppointmentSlot = require('./appointmentSlot.model')(sequelize, DataTypes);
+const AppointmentCancellationReason = require('./appointmentCancellationReason.model')(sequelize, DataTypes);
+const AppointmentStatusHistory = require('./appointmentStatusHistory.model')(sequelize, DataTypes);
+const AppointmentTokenCounter = require('./appointmentTokenCounter.model')(sequelize, DataTypes);
 // --- Associations ---
 // A real, enforced FK (unlike organization-admin-service's geography
 // associations) — resourceId has no default value the way countryId does
@@ -27,4 +24,26 @@ AppointmentSlotConfig.belongsTo(FacilityResource, { as: 'resource', foreignKey: 
 FacilityResource.hasMany(FacilityClosure, { foreignKey: 'resourceId' });
 FacilityClosure.belongsTo(FacilityResource, { as: 'resource', foreignKey: 'resourceId' });
 
-module.exports = { sequelize, FacilityResource, AppointmentSlotConfig, Appointment, FacilityClosure };
+// Slots, appointments and their history: real, enforced FKs (match the raw SQL).
+FacilityResource.hasMany(AppointmentSlot, { foreignKey: 'resourceId' });
+AppointmentSlot.belongsTo(FacilityResource, { as: 'resource', foreignKey: 'resourceId' });
+AppointmentSlotConfig.hasMany(AppointmentSlot, { foreignKey: 'slotConfigId' });
+AppointmentSlot.belongsTo(AppointmentSlotConfig, { as: 'slotConfig', foreignKey: 'slotConfigId' });
+AppointmentSlot.hasMany(Appointment, { as: 'appointments', foreignKey: 'slotId' });
+Appointment.belongsTo(AppointmentSlot, { as: 'slot', foreignKey: 'slotId' });
+Appointment.belongsTo(FacilityResource, { as: 'resource', foreignKey: 'resourceId' });
+Appointment.belongsTo(AppointmentCancellationReason, { as: 'cancellationReason', foreignKey: 'cancellationReasonId' });
+Appointment.hasMany(AppointmentStatusHistory, { as: 'history', foreignKey: 'appointmentId' });
+AppointmentStatusHistory.belongsTo(Appointment, { as: 'appointment', foreignKey: 'appointmentId' });
+
+module.exports = {
+  sequelize,
+  FacilityResource,
+  AppointmentSlotConfig,
+  Appointment,
+  FacilityClosure,
+  AppointmentSlot,
+  AppointmentCancellationReason,
+  AppointmentStatusHistory,
+  AppointmentTokenCounter,
+};

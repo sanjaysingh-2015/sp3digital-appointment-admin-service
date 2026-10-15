@@ -115,3 +115,33 @@ and `providerAffiliationId`. A doctor's leave needs the service chosen (their
 slots are per service). Set `PROVIDER_SERVICE_URL`; run
 `database/complete_db_script/2026-10-08-add-provider-link-to-resources.sql` on
 an existing database first.
+
+## Slots and booking
+
+**Slots.** Slot rules are templates. `npm run generate-slots` (also `POST /slots/generate`
+for a tenant admin) turns every *approved, active* rule into dated slots for the next
+`SLOT_HORIZON_DAYS` days. It is idempotent, so schedule it nightly. It skips closures,
+weekly offs and a doctor's leave, skips times already passed today, closes unbooked slots
+whose rule was edited or switched off (or whose date became a closure), reopens ones it
+closed itself when the cause goes away, and never touches a slot that already has a booking
+— those are reported as `conflicts`. `--dry-run` reports without changing anything.
+
+**Booking (front desk).** `GET /slots` lists what can still be booked — from today onwards,
+and for today only slots that start **after the current time** in `APPOINTMENT_TIMEZONE`.
+`POST /appointments { slotId, patientUuid }` books it: the patient must be an active patient
+(looked up in the patient service), the doctor behind the slot must still be active, verified
+and placed there, the last place can only go to one person (the slot row is locked *and* the
+count is raised by one conditional UPDATE), a patient cannot take the same slot twice nor a
+second place for the same service that day unless staff confirm (`allowSameDay`), and a token
+number (`T001`, `T002` …) is issued per doctor (or service) per day. The appointment keeps a
+copy of the patient's name, phone and email. `PATCH /appointments/:id/cancel` (needs a
+reason from `GET /cancellation-reasons`) gives the place back; `POST /appointments/:id/reschedule`
+moves a booking to another slot of the same service, all or nothing. Neither works once an
+appointment has started.
+
+**Permissions** (`database/seeds/identity-admin-booking-rbac.sql`): tenant admin everything;
+front desk books, cancels and reschedules; ordinary users see the schedule and book.
+
+**Setting up an existing database:** run `database/complete_db_script/2026-10-14-slots-booking.sql`
+(token counter table + default cancellation reasons), then the RBAC seed in the identity database.
+

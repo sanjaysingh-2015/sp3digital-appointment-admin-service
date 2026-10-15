@@ -32,6 +32,21 @@ const SLOT_CONFIG_PERMISSIONS = {
  */
 const APPOINTMENT_PERMISSIONS = {
   READ: 'appointment-admin:appointment:read',
+  // Book an appointment into a slot. Front desk, tenant admin and ordinary users hold this.
+  CREATE: 'appointment-admin:appointment:create',
+  // Cancel or reschedule. Front desk and tenant admin only: moving or dropping a
+  // patient's appointment is a deliberate act, not something every user does.
+  UPDATE: 'appointment-admin:appointment:update',
+};
+
+/**
+ * The dated, bookable slots that the slot rules produce.
+ *   READ     — see the schedule and search open slots (every role that can book)
+ *   GENERATE — run slot generation by hand (tenant admin); the scheduled job runs without a user
+ */
+const SLOT_PERMISSIONS = {
+  READ: 'appointment-admin:slot:read',
+  GENERATE: 'appointment-admin:slot:generate',
 };
 
 /**
@@ -49,4 +64,4 @@ const FACILITY_CLOSURE_PERMISSIONS = {
   UPDATE: 'appointment-admin:facility-closure:update',
 };
 
-module.exports = { SLOT_CONFIG_PERMISSIONS, APPOINTMENT_PERMISSIONS, FACILITY_CLOSURE_PERMISSIONS };
+module.exports = { SLOT_CONFIG_PERMISSIONS, APPOINTMENT_PERMISSIONS, SLOT_PERMISSIONS, FACILITY_CLOSURE_PERMISSIONS };

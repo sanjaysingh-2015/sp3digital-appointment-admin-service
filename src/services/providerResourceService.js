@@ -90,4 +90,19 @@ async function resolveProviderResource({ providerAffiliationId, facilityId, faci
   return { resource, affiliation };
 }
 
-module.exports = { resolveProviderResource };
+/**
+ * Booking-time check on the doctor behind a slot: they may have been suspended,
+ * un-verified or moved since the slot was generated. Slots without a doctor
+ * (service-level) need no check.
+ */
+async function assertProviderBookable(resource, token) {
+  if (!resource || !resource.providerAffiliationId) return;
+  const affiliation = await getAffiliation(resource.providerAffiliationId, token);
+  const provider = affiliation.provider || {};
+  const name = provider.displayName || resource.resourceName || 'The doctor';
+  if (provider.status !== 'ACTIVE' || provider.verificationStatus !== 'VERIFIED' || affiliation.status !== 'ACTIVE') {
+    throw httpError(409, 'PROVIDER_NOT_BOOKABLE', `${name} is not available for new bookings right now`);
+  }
+}
+
+module.exports = { resolveProviderResource, assertProviderBookable };

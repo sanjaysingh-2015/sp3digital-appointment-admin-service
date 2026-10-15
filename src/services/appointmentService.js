@@ -1,6 +1,8 @@
 const { Op } = require("sequelize");
-const { Appointment } = require("../models");
+const { Appointment, AppointmentStatusHistory, FacilityResource } = require("../models");
 const { toSequelizePage, buildEnvelope } = require("../utils/pagination");
+
+const RESOURCE_INCLUDE = { model: FacilityResource, as: "resource", attributes: ["resourceId", "resourceName", "providerId"] };
 
 function notFound(message = "Appointment not found") {
   const error = new Error(message);
@@ -39,6 +41,8 @@ function toResponse(appointment) {
     cancelledOn: plain.cancelledOn,
     rescheduledFromAppointmentId: plain.rescheduledFromAppointmentId,
     notes: plain.notes,
+    resourceName: plain.resource?.resourceName ?? null,
+    providerId: plain.resource?.providerId ?? null,
     createdOn: plain.createdOn,
     modifiedOn: plain.modifiedOn,
   };
@@ -88,6 +92,7 @@ class AppointmentService {
 
     const result = await Appointment.findAndCountAll({
       where,
+      include: [RESOURCE_INCLUDE],
       limit: safeLimit,
       offset,
       order: [
@@ -108,9 +113,26 @@ class AppointmentService {
     // getList above.
     if (tenantUuid) where.tenant_uuid = tenantUuid;
 
-    const appointment = await Appointment.findOne({ where });
+    const appointment = await Appointment.findOne({ where, include: [RESOURCE_INCLUDE] });
     if (!appointment) throw notFound();
     return toResponse(appointment);
+  }
+
+  /** One appointment with its status history, for the booking confirmation and the detail view. */
+  async getDetail(appointmentId, { tenantUuid }) {
+    const where = { appointment_id: appointmentId };
+    if (tenantUuid) where.tenant_uuid = tenantUuid;
+    const appointment = await Appointment.findOne({
+      where,
+      include: [RESOURCE_INCLUDE, { model: AppointmentStatusHistory, as: "history" }],
+      order: [[{ model: AppointmentStatusHistory, as: "history" }, "changedOn", "ASC"]],
+    });
+    if (!appointment) throw notFound();
+    const base = toResponse(appointment);
+    return {
+      ...base,
+      history: (appointment.history || []).map((h) => ({ fromStatus: h.fromStatus, toStatus: h.toStatus, remarks: h.remarks, changedBy: h.changedBy, changedOn: h.changedOn })),
+    };
   }
 }
 
